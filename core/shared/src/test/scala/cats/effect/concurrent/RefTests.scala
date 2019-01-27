@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017-2018 The Typelevel Cats-effect Project Developers
+ * Copyright (c) 2017-2019 The Typelevel Cats-effect Project Developers
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -41,7 +41,7 @@ class RefTests extends AsyncFunSuite with Matchers {
   test("concurrent modifications") {
     val finalValue = 100
     val r = Ref.unsafe[IO, Int](0)
-    val modifies = List.fill(finalValue)(IO.shift *> r.update(_ + 1)).sequence
+    val modifies = List.fill(finalValue)(IO.shift *> r.update(_ + 1)).parSequence
     run(IO.shift *> modifies.start *> awaitEqual(r.get, finalValue))
   }
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017-2018 The Typelevel Cats-effect Project Developers
+ * Copyright (c) 2017-2019 The Typelevel Cats-effect Project Developers
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,7 +25,7 @@ organizationName in ThisBuild := "Typelevel"
 startYear in ThisBuild := Some(2017)
 
 val CompileTime = config("CompileTime").hide
-val SimulacrumVersion = "0.14.0"
+val SimulacrumVersion = "0.15.0"
 val CatsVersion = "1.5.0"
 
 val ScalaTestVersion = Def.setting{
@@ -59,9 +59,9 @@ addCommandAlias("ci", ";test ;mimaReportBinaryIssues; doc")
 addCommandAlias("release", ";project root ;reload ;+publishSigned ;sonatypeReleaseAll ;microsite/publishMicrosite")
 
 val commonSettings = Seq(
-  scalaVersion := "2.12.6",
+  scalaVersion := "2.12.8",
 
-  crossScalaVersions := Seq("2.11.12", "2.12.7", "2.13.0-M5"),
+  crossScalaVersions := Seq("2.11.12", "2.12.8", "2.13.0-M5"),
 
   //todo: re-enable disable scaladoc on 2.13 due to https://github.com/scala/bug/issues/11045
   sources in (Compile, doc) := (
@@ -149,7 +149,7 @@ val commonSettings = Seq(
   homepage := Some(url("https://typelevel.org/cats-effect/")),
   scmInfo := Some(ScmInfo(url("https://github.com/typelevel/cats-effect"), "git@github.com:typelevel/cats-effect.git")),
   headerLicense := Some(HeaderLicense.Custom(
-    """|Copyright (c) 2017-2018 The Typelevel Cats-effect Project Developers
+    """|Copyright (c) 2017-2019 The Typelevel Cats-effect Project Developers
        |
        |Licensed under the Apache License, Version 2.0 (the "License");
        |you may not use this file except in compliance with the License.
@@ -190,28 +190,18 @@ val mimaSettings = Seq(
     import com.typesafe.tools.mima.core._
     import com.typesafe.tools.mima.core.ProblemFilters._
     Seq(
-      // All internals — https://github.com/typelevel/cats-effect/pull/376
-      exclude[DirectMissingMethodProblem]("cats.effect.internals.IOBracket#BracketStart.this"),
-      exclude[MissingClassProblem]("cats.effect.internals.ForwardCancelable$State$IsEmptyCanceled"),
-      exclude[MissingClassProblem]("cats.effect.internals.ForwardCancelable$State$IsEmptyCanceled$"),
-      exclude[MissingClassProblem]("cats.effect.internals.ForwardCancelable$State$Reference"),
-      exclude[MissingClassProblem]("cats.effect.internals.ForwardCancelable$State$IsEmpty$"),
-      exclude[DirectMissingMethodProblem]("cats.effect.internals.ForwardCancelable.:="),
-      exclude[DirectMissingMethodProblem]("cats.effect.internals.ForwardCancelable.this"),
-      exclude[DirectMissingMethodProblem]("cats.effect.internals.ForwardCancelable.plusOne"),
-      exclude[MissingClassProblem]("cats.effect.internals.ForwardCancelable$State$"),
-      exclude[MissingClassProblem]("cats.effect.internals.ForwardCancelable$State$Reference$"),
-      exclude[MissingClassProblem]("cats.effect.internals.ForwardCancelable$State$IsCanceled$"),
-      // https://github.com/typelevel/cats-effect/pull/377
-      exclude[DirectMissingMethodProblem]("cats.effect.internals.IOBracket#EnsureReleaseFrame.this"),
-      exclude[DirectMissingMethodProblem]("cats.effect.internals.IOBracket#BracketReleaseFrame.this"),
-      exclude[DirectMissingMethodProblem]("cats.effect.internals.IOBracket#BaseReleaseFrame.this"),
+      // Ignore any binary compatibility issues/problems that match the internals package
+      exclude[Problem]("cats.effect.internals.*"),
       // All internals - https://github.com/typelevel/cats-effect/pull/403
       exclude[DirectMissingMethodProblem]("cats.effect.concurrent.Semaphore#AbstractSemaphore.awaitGate"),
       exclude[DirectMissingMethodProblem]("cats.effect.concurrent.Semaphore#AsyncSemaphore.awaitGate"),
       exclude[DirectMissingMethodProblem]("cats.effect.concurrent.Semaphore#ConcurrentSemaphore.awaitGate"),
       // All internals — https://github.com/typelevel/cats-effect/pull/424
-      exclude[MissingClassProblem]("cats.effect.concurrent.Deferred$UncancelabbleDeferred")
+      exclude[MissingClassProblem]("cats.effect.concurrent.Deferred$UncancelabbleDeferred"),
+      // Laws - https://github.com/typelevel/cats-effect/pull/473
+      exclude[ReversedMissingMethodProblem]("cats.effect.laws.AsyncLaws.repeatedAsyncFEvaluationNotMemoized"),
+      exclude[ReversedMissingMethodProblem]("cats.effect.laws.BracketLaws.bracketPropagatesTransformerEffects"),
+      exclude[ReversedMissingMethodProblem]("cats.effect.laws.discipline.BracketTests.bracketTrans")
     )
   })
 
@@ -308,6 +298,7 @@ lazy val laws = crossProject(JSPlatform, JVMPlatform)
       "org.scalatest"  %%% "scalatest"  % ScalaTestVersion.value % "test"))
 
   .jvmConfigure(_.enablePlugins(AutomateHeaderPlugin))
+  .jvmConfigure(_.settings(mimaSettings))
   .jsConfigure(_.enablePlugins(AutomateHeaderPlugin))
   .jvmConfigure(profile)
   .jsConfigure(_.settings(scalaJSSettings))

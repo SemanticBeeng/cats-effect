@@ -9,9 +9,10 @@ scaladoc: "#cats.effect.Sync"
 A `Monad` that can suspend the execution of side effects in the `F[_]` context.
 
 ```tut:silent
-import cats.MonadError
+import cats.{Defer, MonadError}
+import cats.effect.Bracket
 
-trait Sync[F[_]] extends MonadError[F, Throwable] {
+trait Sync[F[_]] extends Bracket[F, Throwable] with Defer[F] {
   def suspend[A](thunk: => F[A]): F[A]
   def delay[A](thunk: => A): F[A] = suspend(pure(thunk))
 }
