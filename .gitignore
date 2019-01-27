@@ -9,3 +9,9 @@ tags
 benchmarks/results
 .java-version
 .DS_Store
+
+project/.boot/
+project/.ivy/
+project/.sbtboot/
+
+
