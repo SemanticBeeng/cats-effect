@@ -19,12 +19,13 @@ package cats.effect
 import cats.effect.internals.TestUtils
 import cats.effect.laws.util.{TestContext, TestInstances}
 import org.scalactic.source
-import org.scalatest.prop.Checkers
-import org.scalatest.{FunSuite, Matchers, Tag}
+import org.scalatest.{Matchers, Tag}
+import org.scalatest.funsuite.AnyFunSuite
+import org.scalatestplus.scalacheck.Checkers
 import org.typelevel.discipline.Laws
 import org.typelevel.discipline.scalatest.Discipline
 
-class BaseTestsSuite extends FunSuite with Matchers with Checkers with Discipline
+class BaseTestsSuite extends AnyFunSuite with Matchers with Checkers with Discipline
   with TestInstances with TestUtils {
 
   /** For tests that need a usable [[TestContext]] reference. */
@@ -39,7 +40,7 @@ class BaseTestsSuite extends FunSuite with Matchers with Checkers with Disciplin
     val context = TestContext()
     val ruleSet = f(context)
 
-    for ((id, prop) ← ruleSet.all.properties)
+    for ((id, prop) <- ruleSet.all.properties)
       test(name + "." + id) {
         silenceSystemErr(check(prop))
       }

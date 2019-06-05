@@ -25,7 +25,7 @@ import scala.annotation.unchecked.uncheckedVariance
 import scala.concurrent.duration._
 import scala.concurrent.{ExecutionContext, Future, Promise, TimeoutException}
 import scala.util.control.NonFatal
-import scala.util.{Left, Right}
+import scala.util.{Failure, Left, Right, Success, Try}
 
 /**
  * A pure abstraction representing the intention to perform a
@@ -342,7 +342,10 @@ sealed abstract class IO[+A] extends internals.IOBinaryCompat[A] {
    */
   final def unsafeToFuture(): Future[A] = {
     val p = Promise[A]
-    unsafeRunAsync(_.fold(p.failure, p.success))
+    unsafeRunAsync { cb =>
+      cb.fold(p.failure, p.success)
+      ()
+    }
     p.future
   }
 
@@ -730,9 +733,29 @@ private[effect] abstract class IOParallelNewtype
    * for more details.
    */
   object Par extends IONewtype
+
+  private[effect] def ioParCommutativeApplicative(implicit cs: ContextShift[IO]): CommutativeApplicative[IO.Par] =
+    new CommutativeApplicative[IO.Par] {
+      import IO.Par.{unwrap, apply => par}
+
+      final override def pure[A](x: A): IO.Par[A] =
+        par(IO.pure(x))
+      final override def map2[A, B, Z](fa: IO.Par[A], fb: IO.Par[B])(f: (A, B) => Z): IO.Par[Z] =
+        par(IOParMap(cs, unwrap(fa), unwrap(fb))(f))
+      final override def ap[A, B](ff: IO.Par[A => B])(fa: IO.Par[A]): IO.Par[B] =
+        map2(ff, fa)(_(_))
+      final override def product[A, B](fa: IO.Par[A], fb: IO.Par[B]): IO.Par[(A, B)] =
+        map2(fa, fb)((_, _))
+      final override def map[A, B](fa: IO.Par[A])(f: A => B): IO.Par[B] =
+        par(unwrap(fa).map(f))
+      final override def unit: IO.Par[Unit] =
+        par(IO.unit)
+    }
 }
 
 private[effect] abstract class IOLowPriorityInstances extends IOParallelNewtype {
+  implicit def parApplicative(implicit cs: ContextShift[IO]): Applicative[IO.Par] = ioParCommutativeApplicative
+
   private[effect] class IOSemigroup[A: Semigroup] extends Semigroup[IO[A]] {
     def combine(ioa1: IO[A], ioa2: IO[A]) =
       ioa1.flatMap(a1 => ioa2.map(a2 => Semigroup[A].combine(a1, a2)))
@@ -796,23 +819,7 @@ private[effect] abstract class IOLowPriorityInstances extends IOParallelNewtype 
 }
 
 private[effect] abstract class IOInstances extends IOLowPriorityInstances {
-
-  implicit def parApplicative(implicit cs: ContextShift[IO]): Applicative[IO.Par] = new Applicative[IO.Par] {
-    import IO.Par.{unwrap, apply => par}
-
-    final override def pure[A](x: A): IO.Par[A] =
-      par(IO.pure(x))
-    final override def map2[A, B, Z](fa: IO.Par[A], fb: IO.Par[B])(f: (A, B) => Z): IO.Par[Z] =
-      par(IOParMap(cs, unwrap(fa), unwrap(fb))(f))
-    final override def ap[A, B](ff: IO.Par[A => B])(fa: IO.Par[A]): IO.Par[B] =
-      map2(ff, fa)(_(_))
-    final override def product[A, B](fa: IO.Par[A], fb: IO.Par[B]): IO.Par[(A, B)] =
-      map2(fa, fb)((_, _))
-    final override def map[A, B](fa: IO.Par[A])(f: A => B): IO.Par[B] =
-      par(unwrap(fa).map(f))
-    final override def unit: IO.Par[Unit] =
-      par(IO.unit)
-  }
+  implicit def parCommutativeApplicative(implicit cs: ContextShift[IO]): CommutativeApplicative[IO.Par] = ioParCommutativeApplicative
 
   implicit def ioConcurrentEffect(implicit cs: ContextShift[IO]): ConcurrentEffect[IO] =
     new IOEffect with ConcurrentEffect[IO] {
@@ -1193,8 +1200,8 @@ object IO extends IOInstances {
    *
    * @see [[IO#unsafeToFuture]]
    */
-  def fromFuture[A](iof: IO[Future[A]]): IO[A] =
-    iof.flatMap(IOFromFuture.apply)
+  def fromFuture[A](iof: IO[Future[A]])(implicit cs: ContextShift[IO]): IO[A] =
+    iof.flatMap(IOFromFuture.apply).flatMap(a => cs.shift.map(_ => a))
 
   /**
    * Lifts an `Either[Throwable, A]` into the `IO[A]` context, raising
@@ -1204,6 +1211,16 @@ object IO extends IOInstances {
     e match {
       case Right(a) => pure(a)
       case Left(err) => raiseError(err)
+    }
+
+  /**
+   * Lifts an `Try[A]` into the `IO[A]` context, raising the throwable if it
+   * exists.
+   */
+  def fromTry[A](t: Try[A]): IO[A] =
+    t match {
+      case Success(a) => pure(a)
+      case Failure(err) => raiseError(err)
     }
 
   /**

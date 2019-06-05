@@ -14,10 +14,7 @@ The [Acquiring and releasing `Resource`s](../tutorial/tutorial.html#acquiring-an
 import cats.effect.Bracket
 
 abstract class Resource[F[_], A] {
-  def allocate: F[(A, F[Unit])]
-
-  def use[B, E](f: A => F[B])(implicit F: Bracket[F, E]): F[B] =
-    F.bracket(allocate)(a => f(a._1))(_._2)
+  def use[B](f: A => F[B])(implicit F: Bracket[F, Throwable]): F[B]
 }
 ```
 
@@ -32,7 +29,6 @@ import cats.implicits._
 val greet: String => IO[Unit] = x => IO(println("Hello " ++ x))
 
 Resource.liftF(IO.pure("World")).use(greet).unsafeRunSync
-
 ```
 
 Moreover it's possible to apply further effects to the wrapped resource without leaving the `Resource` context via `evalMap`:

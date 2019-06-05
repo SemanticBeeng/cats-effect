@@ -15,19 +15,20 @@ In this way, `IO` is more similar to common `Task` implementations than it is to
 
 Versions of Cats Effect:
 
-- Stable: `1.2.0`
+- Stable: `1.3.1`
+- Unstable `2.0.0-M3`
 
 See [compatibility and versioning](https://github.com/typelevel/cats-effect/blob/master/versioning.md) for more information on our compatibility and semantic versioning policies.
 
 ```sbt
-libraryDependencies += "org.typelevel" %% "cats-effect" % "1.2.0"
+libraryDependencies += "org.typelevel" %% "cats-effect" % "1.3.1"
 ```
 
 Cats Effect relies on improved type inference and needs partial unification enabled as described in the cats [Getting Started](https://github.com/typelevel/cats#getting-started) documentation.
 
 If your project uses Scala.js, replace the double-`%` with a triple.  Note that **cats-effect** has an upstream dependency on **cats-core** version 1.x.
 
-Cross-builds are available for Scala 2.11.x, 2.12.x, and 2.13.0-M4, as well as Scala.js 0.6.x.
+Cross-builds are available for Scala 2.11.x, 2.12.x, and 2.13.0-RC3, as well as Scala.js 0.6.x. Version 2.0.0-M3 has been cross-built for 2.13.0-RC3 and depends upon cats-core version 2.x.
 
 The most current snapshot (or major release) can be found in the maven badge at the top of this readme.  If you are a very brave sort, you are free to depend on snapshots; they are stable versions, as they are derived from the git hash rather than an unstable `-SNAPSHOT` suffix, but they do not come with any particular confidence or compatibility guarantees.
 
@@ -38,7 +39,7 @@ Please see [this document](https://github.com/typelevel/cats-effect/blob/master/
 The **cats-effect-laws** artifact provides [Discipline-style](https://github.com/typelevel/discipline) laws for the `Sync`, `Async`, `Concurrent`, `Effect` and `ConcurrentEffect` typeclasses (`LiftIO` is lawless, but highly parametric).  It is relatively easy to use these laws to test your own implementations of these typeclasses. Take a look [here](https://github.com/typelevel/cats-effect/tree/master/laws/shared/src/main/scala/cats/effect/laws) for more.
 
 ```sbt
-libraryDependencies += "org.typelevel" %% "cats-effect-laws" % "1.2.0" % "test"
+libraryDependencies += "org.typelevel" %% "cats-effect-laws" % "1.3.1" % "test"
 ```
 
 These laws are compatible with both Specs2 and ScalaTest.
@@ -83,6 +84,7 @@ These are some of the projects that provide high-level functions on top of `cats
 | [Fuuid](https://christopherdavenport.github.io/fuuid/) | Functional UUID's |
 | [Linebacker](https://christopherdavenport.github.io/linebacker/) | Thread Pool Management for Scala: Enabling functional blocking where needed |
 | [Log4cats](https://christopherdavenport.github.io/log4cats/) | Functional Logging |
+| [Cats STM](https://timwspence.github.io/cats-stm/) | Software Transactional Memory for Cats Effect |
 
 ## Development
 
@@ -90,7 +92,7 @@ We use the standard pull request driven github workflow.  Pull requests are alwa
 
 Do *not* rebase commits that have been PR'd!  That history doesn't belong to you anymore, and it is not yours to rewrite.  This goes for maintainers and contributors alike.  Rebasing locally is completely fine (and encouraged), since linear history is pretty and checkpoint commits are not.  Just don't rebase something that's already out there unless you've *explicitly* marked it as a work in progress (e.g. `[WIP]`) in some clear and unambiguous way.
 
-cats-effect is a [Typelevel](http://typelevel.org/) project. This means we embrace pure, typeful, functional programming, and provide a safe and friendly environment for teaching, learning, and contributing as described in the [Code of Conduct](./CODE_OF_CONDUCT.md).
+cats-effect is a [Typelevel](http://typelevel.org/) project. This means we embrace pure, typeful, functional programming, and provide a safe and friendly environment for teaching, learning, and contributing as described in the [Code of Conduct].
 
 ### Contributing documentation
 
@@ -127,3 +129,5 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ```
+
+[Code of Conduct]: https://github.com/typelevel/cats-effect/blob/master/CODE_OF_CONDUCT.md

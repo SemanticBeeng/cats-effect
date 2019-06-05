@@ -19,6 +19,7 @@ package cats.effect
 import cats._
 import cats.data.AndThen
 import cats.effect.ExitCase.Completed
+import cats.effect.internals.ResourcePlatform
 import cats.implicits._
 
 import scala.annotation.tailrec
@@ -231,9 +232,16 @@ sealed abstract class Resource[F[_], A] {
     */
   def evalMap[B](f: A => F[B])(implicit F: Applicative[F]): Resource[F, B] =
     this.flatMap(a => Resource.liftF(f(a)))
+
+  /**
+    * Applies an effectful transformation to the allocated resource. Like a
+    * `flatTap` on `F[A]` while maintaining the resource context
+    */
+  def evalTap[B](f: A => F[B])(implicit F: Applicative[F]): Resource[F, A] =
+    this.evalMap(a => f(a).as(a))
 }
 
-object Resource extends ResourceInstances {
+object Resource extends ResourceInstances with ResourcePlatform {
   /**
    * Creates a resource from an allocating effect.
    *
@@ -315,7 +323,7 @@ object Resource extends ResourceInstances {
    * @param fa the value to lift into a resource
    */
   def liftF[F[_], A](fa: F[A])(implicit F: Applicative[F]): Resource[F, A] =
-    make(fa)(_ => F.unit)
+    Resource.suspend(fa.map(a => Resource.pure(a)))
 
   /**
     * Creates a [[Resource]] by wrapping a Java
@@ -400,6 +408,12 @@ private[effect] abstract class ResourceInstances extends ResourceInstances0 {
     new ResourceMonoid[F, A] {
       def A = A0
       def F = F0
+    }
+
+  implicit def catsEffectLiftIOForResource[F[_]](implicit F00: LiftIO[F], F10: Applicative[F]): LiftIO[Resource[F, ?]] =
+    new ResourceLiftIO[F] {
+      def F0 = F00
+      def F1 = F10
     }
 }
 
@@ -506,4 +520,12 @@ private[effect] abstract class ResourceSemigroupK[F[_]] extends SemigroupK[Resou
       y <- ry
       xy <- Resource.liftF(K.combineK(x.pure[F], y.pure[F]))
     } yield xy
+}
+
+private[effect] abstract class ResourceLiftIO[F[_]] extends LiftIO[Resource[F, ?]] {
+  protected implicit def F0: LiftIO[F]
+  protected implicit def F1: Applicative[F]
+
+  def liftIO[A](ioa: IO[A]): Resource[F, A] =
+    Resource.liftF(F0.liftIO(ioa))
 }

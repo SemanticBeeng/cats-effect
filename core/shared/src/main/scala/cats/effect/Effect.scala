@@ -73,6 +73,11 @@ object Effect {
     }
 
   /**
+    * [[Effect.toIO]] as a natural transformation.
+    */
+  def toIOK[F[_]](implicit F: Effect[F]): F ~> IO = λ[F ~> IO](F.toIO(_))
+
+  /**
    * [[Effect]] instance built for `cats.data.EitherT` values initialized
    * with any `F` data type that also implements `Effect`.
    */
@@ -92,7 +97,7 @@ object Effect {
     protected def F: Effect[F]
 
     def runAsync[A](fa: EitherT[F, Throwable, A])(cb: Either[Throwable, A] => IO[Unit]): SyncIO[Unit] =
-      F.runAsync(fa.value)(cb.compose(_.right.flatMap(x => x)))
+      F.runAsync(fa.value)(cb.compose(_.flatMap(x => x)))
 
     override def toIO[A](fa: EitherT[F, Throwable, A]): IO[A] =
       F.toIO(F.rethrow(fa.value))
@@ -105,7 +110,7 @@ object Effect {
     protected def L: Monoid[L]
 
     def runAsync[A](fa: WriterT[F, L, A])(cb: Either[Throwable, A] => IO[Unit]): SyncIO[Unit] =
-      F.runAsync(fa.run)(cb.compose(_.right.map(_._2)))
+      F.runAsync(fa.run)(cb.compose(_.map(_._2)))
 
     override def toIO[A](fa: WriterT[F, L, A]): IO[A] =
       F.toIO(fa.value(F))

@@ -17,15 +17,17 @@
 package cats
 package effect
 
-import java.util.concurrent.atomic.AtomicBoolean
-
 import cats.data.Kleisli
+import cats.effect.concurrent.Deferred
 import cats.effect.laws.discipline.arbitrary._
+import cats.implicits._
 import cats.kernel.laws.discipline.MonoidTests
 import cats.laws._
 import cats.laws.discipline._
 import cats.laws.discipline.arbitrary._
-import cats.implicits._
+import java.util.concurrent.atomic.AtomicBoolean
+import scala.concurrent.duration._
+import scala.util.Success
 
 class ResourceTests extends BaseTestsSuite {
   checkAllAsync("Resource[IO, ?]", implicit ec => MonadErrorTests[Resource[IO, ?], Throwable].monadError[Int, Int, Int])
@@ -73,16 +75,16 @@ class ResourceTests extends BaseTestsSuite {
   }
 
   test("resource from AutoCloseable is auto closed") {
+    var closed = false
     val autoCloseable = new AutoCloseable {
-      var closed = false
       override def close(): Unit = closed = true
     }
 
     val result = Resource.fromAutoCloseable(IO(autoCloseable))
-      .use(source => IO.pure("Hello world")).unsafeRunSync()
+      .use(_ => IO.pure("Hello world")).unsafeRunSync()
 
     result shouldBe "Hello world"
-    autoCloseable.closed shouldBe true
+    closed shouldBe true
   }
 
   testAsync("liftF") { implicit ec =>
@@ -91,24 +93,31 @@ class ResourceTests extends BaseTestsSuite {
     }
   }
 
+  testAsync("liftF - interruption") { implicit ec =>
+    implicit val timer = ec.timer[IO]
+    implicit val ctx = ec.contextShift[IO]
+
+    def p = Deferred[IO, ExitCase[Throwable]].flatMap { stop =>
+      val r = Resource
+        .liftF(IO.never: IO[Int])
+        .use(IO.pure)
+        .guaranteeCase(stop.complete)
+
+      r.start.flatMap { fiber =>
+        timer.sleep(200.millis) >> fiber.cancel >> stop.get
+      }
+    }.timeout(2.seconds)
+
+    val res = p.unsafeToFuture
+
+    ec.tick(3.seconds)
+
+    res.value shouldBe Some(Success(ExitCase.Canceled))
+  }
+
   testAsync("evalMap") { implicit ec =>
     check { (f: Int => IO[Int]) =>
       Resource.liftF(IO(0)).evalMap(f).use(IO.pure) <-> f(0)
-    }
-  }
-
-  testAsync("evalMap with cancellation <-> IO.never") { implicit ec =>
-    implicit val cs = ec.contextShift[IO]
-
-    check { (g: Int => IO[Int]) =>
-      val effect: Int => IO[Int] = a =>
-        for {
-          f <- (g(a) <* IO.cancelBoundary).start
-          _ <- f.cancel
-          r <- f.join
-        } yield r
-
-      Resource.liftF(IO(0)).evalMap(effect).use(IO.pure) <-> IO.never
     }
   }
 
@@ -119,6 +128,37 @@ class ResourceTests extends BaseTestsSuite {
     check { (g: Int => IO[Int]) =>
       val effect: Int => IO[Int] = a => (g(a) <* IO(throw Foo))
       Resource.liftF(IO(0)).evalMap(effect).use(IO.pure) <-> IO.raiseError(Foo)
+    }
+  }
+
+  testAsync("evalTap") { implicit ec =>
+    check { (f: Int => IO[Int]) =>
+      Resource.liftF(IO(0)).evalTap(f).use(IO.pure) <-> f(0).as(0)
+    }
+  }
+
+  testAsync("evalTap with cancellation <-> IO.never") { implicit ec =>
+    implicit val cs = ec.contextShift[IO]
+
+    check { (g: Int => IO[Int]) =>
+      val effect: Int => IO[Int] = a =>
+        for {
+          f <- (g(a) <* IO.cancelBoundary).start
+          _ <- f.cancel
+          r <- f.join
+        } yield r
+
+      Resource.liftF(IO(0)).evalTap(effect).use(IO.pure) <-> IO.never
+    }
+  }
+
+  testAsync("(evalTap with error <-> IO.raiseError") { implicit ec =>
+    case object Foo extends Exception
+    implicit val cs = ec.contextShift[IO]
+
+    check { (g: Int => IO[Int]) =>
+      val effect: Int => IO[Int] = a => (g(a) <* IO(throw Foo))
+      Resource.liftF(IO(0)).evalTap(effect).use(IO.pure) <-> IO.raiseError(Foo)
     }
   }
 
@@ -133,7 +173,7 @@ class ResourceTests extends BaseTestsSuite {
 
   test("mapK should preserve ExitCode-specific behaviour") {
     val takeAnInteger = new ~>[IO, Kleisli[IO, Int, ?]] {
-      override def apply[A](fa: IO[A]): Kleisli[IO, Int, A] = Kleisli { i: Int => fa }
+      override def apply[A](fa: IO[A]): Kleisli[IO, Int, A] = Kleisli.liftF(fa)
     }
 
     def sideEffectyResource: (AtomicBoolean, Resource[IO, Unit]) = {
@@ -156,7 +196,7 @@ class ResourceTests extends BaseTestsSuite {
     clean1.get() shouldBe false
 
     val (clean2, res2) = sideEffectyResource
-    res2.mapK(takeAnInteger).use(_ => Kleisli {i: Int => IO.raiseError[Unit](new Throwable("oh no"))}).run(0).attempt.unsafeRunSync()
+    res2.mapK(takeAnInteger).use(_ => Kleisli.liftF(IO.raiseError[Unit](new Throwable("oh no")))).run(0).attempt.unsafeRunSync()
     clean2.get() shouldBe false
   }
 
@@ -177,8 +217,9 @@ class ResourceTests extends BaseTestsSuite {
     val prog = for {
       res <- (release *> resource).allocated
       (_, close) = res
-      releaseAfterF <- IO(released.get() shouldBe false)
-      _ <- close >> IO(released.get() shouldBe true)
+      _ <- IO(released.get() shouldBe false)
+      _ <- close
+      _ <- IO(released.get() shouldBe true)
     } yield ()
 
     prog.unsafeRunSync
@@ -191,7 +232,7 @@ class ResourceTests extends BaseTestsSuite {
       override def apply[A](fa: Kleisli[IO, Int, A]): IO[A] = fa(2)
     }
     val takeAnInteger = new ~>[IO, Kleisli[IO, Int, ?]] {
-      override def apply[A](fa: IO[A]): Kleisli[IO, Int, A] = Kleisli { i: Int => fa }
+      override def apply[A](fa: IO[A]): Kleisli[IO, Int, A] = Kleisli.liftF(fa)
     }
     val plusOne = Kleisli {i: Int => IO { i + 1 }}
     val plusOneResource = Resource.liftF(plusOne)
@@ -202,8 +243,9 @@ class ResourceTests extends BaseTestsSuite {
     val prog = for {
       res <- ((release *> resource).mapK(takeAnInteger) *> plusOneResource).mapK(runWithTwo).allocated
       (_, close) = res
-      releaseAfterF <- IO(released.get() shouldBe false)
-      _ <- close >> IO(released.get() shouldBe true)
+      _ <- IO(released.get() shouldBe false)
+      _ <- close
+      _ <- IO(released.get() shouldBe true)
     } yield ()
 
     prog.unsafeRunSync

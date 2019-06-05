@@ -18,10 +18,11 @@ package cats
 package effect
 package concurrent
 
-import org.scalatest.{FunSuite, Matchers}
-import org.scalatest.prop.Checkers
+import org.scalatest.Matchers
+import org.scalatest.funsuite.AnyFunSuite
+import org.scalatestplus.scalacheck.Checkers
 
-class ExitCodeTests extends FunSuite with Matchers with Checkers {
+class ExitCodeTests extends AnyFunSuite with Matchers with Checkers {
   test("fromInt(i) == fromInt(i & 0xff)") {
     check { i: Int =>
       ExitCode(i) == ExitCode(i & 0xff)

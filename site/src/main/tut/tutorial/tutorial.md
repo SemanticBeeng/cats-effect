@@ -51,7 +51,7 @@ version := "1.0"
 
 scalaVersion := "2.12.8"
 
-libraryDependencies += "org.typelevel" %% "cats-effect" % "1.0.0" withSources() withJavadoc()
+libraryDependencies += "org.typelevel" %% "cats-effect" % "1.3.0" withSources() withJavadoc()
 
 scalacOptions ++= Seq(
   "-feature",
@@ -184,7 +184,7 @@ def copy(origin: File, destination: File): IO[Long] =
 
 The new method `transfer` will perform the actual copying of data, once the
 resources (the streams) are obtained. When they are not needed anymore, whatever
-the outcome of `transfer` (success of failure) both streams will be closed. If
+the outcome of `transfer` (success or failure) both streams will be closed. If
 any of the streams could not be obtained, then `transfer` will not be run. Even
 better, because of `Resource` semantics, if there is any problem opening the
 input file then the output file will not be opened.  On the other hand, if there
@@ -828,7 +828,16 @@ that message is received.
 
 Let's first define a new method `server` that instantiates the flag, runs the
 `serve` method in its own fiber and waits on the flag to be set. Only when
-the flag is set the server fiber will be canceled.
+the flag is set the server fiber will be canceled. The cancellation itself (the
+call to `fiber.cancel`) is also run in a separate fiber to prevent being
+blocked by it. This is not always needed, but the cancellation of actions
+defined by `bracket` or `bracketCase` will wait until all finalizers (release
+stage of bracket) are finished. The `F` created by our `serve` function is
+defined based on `bracketCase`, so if the action is blocked at any bracket stage
+(acquisition, usage or release), then the cancel call will be blocked too. And
+our bracket blocks as the `serverSocket.accept` call is blocking!. As a result,
+invoking `.cancel` will block our `server` function. To fix this we just execute
+the cancellation on its own fiber by running `.cancel.start`.
 
 ```scala
 import cats.effect._
@@ -846,7 +855,7 @@ def server[F[_]: Concurrent](serverSocket: ServerSocket): F[ExitCode] =
     stopFlag    <- MVar[F].empty[Unit]
     serverFiber <- serve(serverSocket, stopFlag).start // Server runs on its own Fiber
     _           <- stopFlag.read                       // Blocked until 'stopFlag.put(())' is run
-    _           <- serverFiber.cancel                  // Stopping server!
+    _           <- serverFiber.cancel.start            // Stopping server!
   } yield ExitCode.Success
 ```
 
@@ -944,11 +953,17 @@ The code of the server able to react to stop events is available
 [here](https://github.com/lrodero/cats-effect-tutorial/blob/master/src/main/scala/catsEffectTutorial/EchoServerV2_GracefulStop.scala).
 
 If you run the server coded above, open a telnet session against it and send an
-`STOP` message you will see how the server is properly terminated.
+`STOP` message you will see how the server is properly terminated: the `server`
+function will cancel the fiber on `serve` and return, then `bracket` defined in
+our main `run` method will finalize the usage stage and relaese the server
+socket. This will make the `serverSocket.accept()` in the `serve` function to
+throw an exception that will be caught by the `bracketCase` of that function.
+Because `serve` was already canceled, and given how we defined the release stage
+of its `bracketCase`, the function will finish normally.
 
 #### Exercise: closing client connections to echo server on shutdown
 There is a catch yet in our server. If there are several clients connected,
-sending an `STOP` message will close the server's fiber and the one attending
+sending a `STOP` message will close the server's fiber and the one attending
 the client that sent the message. But the other fibers will keep running
 normally! It is like they were daemon threads. Arguably, we could expect that
 shutting down the server shall close _all_ connections. How could we do it?
@@ -964,7 +979,7 @@ consider taking some time looking for a solution yourself :) .
 
 #### Solution
 We could keep a list of active fibers serving client connections. It is
-doable, but cumbersome...  and not really needed at this point.
+doable, but cumbersome … and not really needed at this point.
 
 Think about it: we have a `stopFlag` that signals when the server must be
 stopped. When that flag is set we can assume we shall close all client
@@ -1119,7 +1134,7 @@ clients by sending an empty line (recall that makes the server to close that
 client session) then immediately one of the blocked clients will be active.
 
 It shall be clear from that experiment that fibers are run by thread pools. And
-that in our case, all our fibers share the same thread pool! `ContextShif[F]`
+that in our case, all our fibers share the same thread pool! `ContextShift[F]`
 is in charge of assigning threads to the fibers waiting to be run, each one
 with a pending `F` action. When using `IOApp` we get also the `ContextShift[IO]`
 that we need to run the fibers in our code. So there are our threads!
@@ -1130,8 +1145,8 @@ Cats-effect provides ways to use different `ContextShift`s (each with its own
 thread pool) when running `F` actions, and to swap which one should be used for
 each new `F` to ask to reschedule threads among the current active `F`
 instances _e.g._ for improved fairness etc. Code below shows an example of how to
-declare tasks that will be run in different thread pools: first task will be run
-by the thread pool of the `ExecutionContext` passed as parameter, the second
+declare tasks that will be run in different thread pools: the first task will be
+run by the thread pool of the `ExecutionContext` passed as parameter, the second
 task will be run in the default thread pool.
 
 ```scala
@@ -1139,19 +1154,17 @@ import cats.effect._
 import cats.implicits._
 import scala.concurrent.ExecutionContext
 
-def doHeavyStuffInADifferentThreadPool[F[_]: ContextShift: Sync](implicit ec: ExecutionContext): F[Unit] = {
-  val csf = implicitly[ContextShift[F]]
+def doHeavyStuffInADifferentThreadPool[F[_]: ContextShift: Sync](implicit ec: ExecutionContext): F[Unit] =
   for {
-    _ <- csf.evalOn(ec)(Sync[F].delay(println("Hi!"))) // Swapping to thread pool of given ExecutionContext
+    _ <- ContextShift[F].evalOn(ec)(Sync[F].delay(println("Hi!"))) // Swapping to thread pool of given ExecutionContext
     _ <- Sync[F].delay(println("Welcome!")) // Running back in default thread pool
   } yield ()
-}
 ```
 
 #### Exercise: using a custom thread pool in echo server
 Given what we know so far, how could we solve the problem of the limited number
 of clients attended in parallel in our echo server? Recall that in traditional
-servers we would make use of an specific thread pool for clients, able to resize
+servers we would make use of a specific thread pool for clients, able to resize
 itself by creating new threads if they are needed. You can get such a pool using
 `Executors.newCachedThreadPool()`. But take care of shutting the pool down when
 the server is stopped!
@@ -1164,11 +1177,9 @@ connected client. So the beginning of the `echoProtocol` function would look lik
 ```scala
 def echoProtocol[F[_]: Sync: ContextShift](clientSocket: Socket, stopFlag: MVar[F, Unit])(implicit clientsExecutionContext: ExecutionContext): F[Unit] = {
 
-  val csf = implicitly[ContextShift[F]]
-
   def loop(reader: BufferedReader, writer: BufferedWriter, stopFlag: MVar[F, Unit]): F[Unit] =
     for {
-      lineE <- csf.evalOn(clientsExecutionContext)(Sync[F].delay(reader.readLine()).attempt)
+      lineE <- ContextShift[F].evalOn(clientsExecutionContext)(Sync[F].delay(reader.readLine()).attempt)
 //    ...
 ```
 
@@ -1197,15 +1208,15 @@ def server[F[_]: Concurrent: ContextShift](serverSocket: ServerSocket): F[ExitCo
     serverFiber <- serve(serverSocket, stopFlag).start         // Server runs on its own Fiber
     _           <- stopFlag.read                               // Blocked until 'stopFlag.put(())' is run
     _           <- Sync[F].delay(clientsThreadPool.shutdown()) // Shutting down clients pool
-    _           <- serverFiber.cancel                          // Stopping server
+    _           <- serverFiber.cancel.start                    // Stopping server
   } yield ExitCode.Success
 }
 ```
 
 Signatures of `serve` and of `echoProtocol` will have to be changed too to pass
 the execution context as parameter. Finally, we need an implicit
-`ContextShift[F]` that will be carried by the functions signature. It is `IOApp`
-who provides the instance of `ContextShift[IO]` in the `run` method.
+`ContextShift[F]` that will be carried by the function's signature. It is `IOApp`
+which provides the instance of `ContextShift[IO]` in the `run` method.
 
 #### Echo server code, thread pool for clients version
 The version of our echo server using a thread pool is available
@@ -1214,10 +1225,10 @@ The version of our echo server using a thread pool is available
 ## Let's not forget about `async`
 
 The `async` functionality is another powerful capability of cats-effect we have
-not mentioned yet. It is provided by `Async` type class, that it allows to
+not mentioned yet. It is provided by `Async` type class, and it allows to
 describe `F` instances that may be terminated by a thread different than the
-one carrying the evaluation of that instance. Result will be returned by using
-a callback.
+one carrying the evaluation of that instance. The result will be returned by
+using a callback.
 
 Some of you may wonder if that could help us to solve the issue of having
 blocking code in our fabulous echo server. Unfortunately, `async` cannot

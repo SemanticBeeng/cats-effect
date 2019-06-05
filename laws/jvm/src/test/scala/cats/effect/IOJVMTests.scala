@@ -20,12 +20,13 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 
 import org.scalatest._
+import org.scalatest.funsuite.AnyFunSuite
 import cats.syntax.all._
 
-import scala.concurrent.ExecutionContext
+import scala.concurrent.{ExecutionContext, Future}
 import scala.concurrent.duration._
 
-class IOJVMTests extends FunSuite with Matchers {
+class IOJVMTests extends AnyFunSuite with Matchers {
   val ThreadName = "test-thread"
 
   val TestEC = new ExecutionContext {
@@ -48,6 +49,7 @@ class IOJVMTests extends FunSuite with Matchers {
         override def run() =
           cb(Right(Thread.currentThread().getName))
       }
+      ()
     }
 
     val test = for {
@@ -103,9 +105,8 @@ class IOJVMTests extends FunSuite with Matchers {
   }
 
   test("long synchronous loops that are forked are cancelable") {
+    val thread = new AtomicReference[Thread](null)
     implicit val ec = new ExecutionContext {
-      val thread = new AtomicReference[Thread](null)
-
       def execute(runnable: Runnable): Unit = {
         val th = new Thread(runnable)
         if (!thread.compareAndSet(null, th))
@@ -131,16 +132,28 @@ class IOJVMTests extends FunSuite with Matchers {
       // Cancelling
       c.unsafeRunSync()
       // Joining thread should succeed in case of cancelation
-      val th = ec.thread.get()
+      val th = thread.get()
       th.join(1000 * 10) // 10 seconds
 
       if (th.isAlive) {
         fail("thread is still active")
       }
     } finally {
-      val th = ec.thread.get()
+      val th = thread.get()
       if (th != null && th.isAlive)
         th.interrupt()
     }
+  }
+
+  test("fromFuture shifts continuation") {
+    import scala.concurrent.ExecutionContext.Implicits.global
+
+    implicit val CS: ContextShift[IO] = IO.contextShift(TestEC)
+
+    val ioa = IO.fromFuture(IO(Future(()))) >> IO {
+      Thread.currentThread().getName()
+    }
+
+    ioa.unsafeRunSync() shouldEqual ThreadName
   }
 }

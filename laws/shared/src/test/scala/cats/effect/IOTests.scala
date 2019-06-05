@@ -30,7 +30,7 @@ import cats.laws.discipline._
 import org.scalacheck._
 
 import scala.concurrent.{ExecutionContext, Future, Promise, TimeoutException}
-import scala.util.{Failure, Success}
+import scala.util.{Failure, Success, Try}
 import scala.concurrent.duration._
 
 
@@ -45,7 +45,7 @@ class IOTests extends BaseTestsSuite {
 
   checkAllAsync("IO.Par", implicit ec => {
     implicit val cs = ec.contextShift[IO]
-    ApplicativeTests[IO.Par].applicative[Int, Int, Int]
+    CommutativeApplicativeTests[IO.Par].commutativeApplicative[Int, Int, Int]
   })
 
   checkAllAsync("IO", implicit ec => {
@@ -135,6 +135,24 @@ class IOTests extends BaseTestsSuite {
     val e : Either[Throwable, Foo] = Right(Foo(1))
 
     IO.fromEither(e).attempt.unsafeRunSync() should matchPattern {
+      case Right(Foo(_)) => ()
+    }
+  }
+
+  test("fromTry handles Failure") {
+    case object Foo extends Exception
+    val t : Try[Nothing] = Failure(Foo)
+
+    IO.fromTry(t).attempt.unsafeRunSync() should matchPattern {
+      case Left(Foo) => ()
+    }
+  }
+
+  test("fromTry handles Success") {
+    case class Foo(x: Int)
+    val t : Try[Foo] = Success(Foo(1))
+
+    IO.fromTry(t).attempt.unsafeRunSync() should matchPattern {
       case Right(Foo(_)) => ()
     }
   }
@@ -236,18 +254,21 @@ class IOTests extends BaseTestsSuite {
   }
 
   testAsync("fromFuture works for values") { implicit ec =>
+    implicit val cs: ContextShift[IO] = IO.contextShift(ec)
     check { (a: Int, f: Int => Long) =>
       IO.fromFuture(IO(Future(f(a)))) <-> IO(f(a))
     }
   }
 
   testAsync("fromFuture works for successful completed futures") { implicit ec =>
+    implicit val cs: ContextShift[IO] = IO.contextShift(ec)
     check { (a: Int) =>
       IO.fromFuture(IO.pure(Future.successful(a))) <-> IO.pure(a)
     }
   }
 
   testAsync("fromFuture works for exceptions") { implicit ec =>
+    implicit val cs: ContextShift[IO] = IO.contextShift(ec)
     check { (ex: Throwable) =>
       val io = IO.fromFuture[Int](IO(Future(throw ex)))
       io <-> IO.raiseError[Int](ex)
@@ -255,12 +276,14 @@ class IOTests extends BaseTestsSuite {
   }
 
   testAsync("fromFuture works for failed completed futures") { implicit ec =>
+    implicit val cs: ContextShift[IO] = IO.contextShift(ec)
     check { (ex: Throwable) =>
       IO.fromFuture[Int](IO.pure(Future.failed(ex))) <-> IO.raiseError[Int](ex)
     }
   }
 
   testAsync("fromFuture protects against user code") { implicit ec =>
+    implicit val cs: ContextShift[IO] = IO.contextShift(ec)
     check { (ex: Throwable) =>
       val io = IO.fromFuture[Int](IO(throw ex))
       io <-> IO.raiseError[Int](ex)
@@ -268,6 +291,7 @@ class IOTests extends BaseTestsSuite {
   }
 
   testAsync("fromFuture suspends side-effects") { implicit ec =>
+    implicit val cs: ContextShift[IO] = IO.contextShift(ec)
     check { (a: Int, f: (Int, Int) => Int, g: (Int, Int) => Int) =>
       var effect = a
       val io1 = IO.fromFuture(IO(Future { effect = f(effect, a) }))
@@ -475,6 +499,11 @@ class IOTests extends BaseTestsSuite {
   test("suspend with unsafeRunSync") {
     val io = IO.suspend(IO(1)).map(_ + 1)
     io.unsafeRunSync() shouldEqual 2
+  }
+
+  test("uncancelable with unsafeRunSync") {
+    val io = IO.pure(1).uncancelable
+    io.unsafeRunSync() shouldBe 1
   }
 
   test("map is stack-safe for unsafeRunSync") {

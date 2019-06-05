@@ -1,29 +1,37 @@
+dist: xenial
 sudo: false
 language: scala
 
 matrix:
   include:
-    - jdk: oraclejdk8
+    - jdk: openjdk8
       scala: 2.11.12
       env: COVERAGE=coverage
     - jdk: openjdk11
       scala: 2.11.12
       env: COVERAGE=
-    - jdk: oraclejdk8
-      scala: 2.12.8
+    - jdk: openjdk8
+      scala: 2.13.0-RC3
       env: COVERAGE=
-    - jdk: oraclejdk8
-      scala: 2.13.0-M5
+    # We want the latest stable Scala last so sbt-travisci makes it the default
+    - jdk: openjdk8
+      scala: 2.12.8
       env: COVERAGE=
     - jdk: openjdk11
       scala: 2.12.8
       env: COVERAGE=
 
+install:
+  - rvm use 2.6.0 --install --fuzzy
+  - gem update --system
+  - gem install sass
+  - gem install jekyll -v 3.2.1
+
 script:
   - export SBT_PROFILE=$COVERAGE
   - sbt ++$TRAVIS_SCALA_VERSION $COVERAGE ci
   - |
-    if [[ "$TRAVIS_SCALA_VERSION" =~ "2\.12\." ]]; then
+    if [[ "$TRAVIS_SCALA_VERSION" =~ ^2\.12\. ]]; then
       sbt ++$TRAVIS_SCALA_VERSION microsite/makeMicrosite
     fi
 

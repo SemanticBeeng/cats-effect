@@ -25,62 +25,28 @@ organizationName in ThisBuild := "Typelevel"
 startYear in ThisBuild := Some(2017)
 
 val CompileTime = config("CompileTime").hide
-val SimulacrumVersion = "0.15.0"
-val CatsVersion = "1.5.0"
-
-val ScalaTestVersion = Def.setting{
-  CrossVersion.partialVersion(scalaVersion.value) match {
-    case Some((2, v)) if v <= 12 =>
-      "3.0.5"
-    case _ =>
-      "3.0.6-SNAP5"
-  }
-}
-
-val ScalaCheckVersion = Def.setting{
-  CrossVersion.partialVersion(scalaVersion.value) match {
-    case Some((2, v)) if v <= 12 =>
-      "1.13.5"
-    case _ =>
-      "1.14.0"
-  }
-}
-
-val DisciplineVersion = Def.setting{
-  CrossVersion.partialVersion(scalaVersion.value) match {
-    case Some((2, v)) if v <= 12 =>
-      "0.9.0"
-    case _ =>
-      "0.10.0"
-  }
-}
+val SimulacrumVersion = "0.18.0"
+val CatsVersion = "2.0.0-M3"
+val ScalaTestVersion = "3.1.0-SNAP12"
+val ScalaTestPlusScalaCheckVersion = "1.0.0-SNAP7"
+val ScalaCheckVersion = "1.14.0"
+val DisciplineVersion = "0.12.0-M2"
 
 addCommandAlias("ci", ";test ;mimaReportBinaryIssues; doc")
-addCommandAlias("release", ";project root ;reload ;+publishSigned ;sonatypeReleaseAll ;microsite/publishMicrosite")
+addCommandAlias("release", ";project root ;reload ;+publish ;sonatypeReleaseAll ;microsite/publishMicrosite")
 
 val commonSettings = Seq(
-  scalaVersion := "2.12.8",
-
-  crossScalaVersions := Seq("2.11.12", "2.12.8", "2.13.0-M5"),
-
-  //todo: re-enable disable scaladoc on 2.13 due to https://github.com/scala/bug/issues/11045
-  sources in (Compile, doc) := (
-    CrossVersion.partialVersion(scalaVersion.value) match {
-      case Some((2, v)) if v <= 12 =>
-        (sources in (Compile, doc)).value
-      case _ =>
-        Nil
-    }
-  ),
-
   scalacOptions ++= PartialFunction.condOpt(CrossVersion.partialVersion(scalaVersion.value)) {
     case Some((2, n)) if n >= 13 =>
-      Seq(
-        "-Ymacro-annotations"
-      )
+      // Necessary for simulacrum
+      Seq("-Ymacro-annotations")
   }.toList.flatten,
 
-  scalacOptions in (Compile, console) ~= (_ filterNot Set("-Xfatal-warnings", "-Ywarn-unused-import").contains),
+  scalacOptions --= PartialFunction.condOpt(CrossVersion.partialVersion(scalaVersion.value)) {
+    case Some((2, 11)) =>
+      // Falsely detects interpolation in @implicitNotFound
+      Seq("-Xlint:missing-interpolator")
+  }.toList.flatten,
 
   scalacOptions in (Compile, doc) ++= {
     val isSnapshot = git.gitCurrentTags.value.map(git.gitTagToVersionNumber.value).flatten.isEmpty
@@ -100,6 +66,9 @@ val commonSettings = Seq(
     Seq("-doc-root-content", (baseDirectory.value.getParentFile / "shared" / "rootdoc.txt").getAbsolutePath),
   scalacOptions in (Compile, doc) ++=
     Opts.doc.title("cats-effect"),
+
+  scalacOptions in Test += "-Yrangepos",
+  scalacOptions in Test ~= (_.filterNot(Set("-Wvalue-discard", "-Ywarn-value-discard"))),
 
   // Disable parallel execution in tests; otherwise we cannot test System.err
   parallelExecution in Test := false,
@@ -144,6 +113,11 @@ val commonSettings = Seq(
         <name>Alexandru Nedelcu</name>
         <url>https://alexn.org</url>
       </developer>
+     <developer>
+        <id>SystemFw</id>
+        <name>Fabio Labella</name>
+        <url>https://github.com/systemfw</url>
+      </developer>
     </developers>,
 
   homepage := Some(url("https://typelevel.org/cats-effect/")),
@@ -176,14 +150,14 @@ val commonSettings = Seq(
     }).transform(node).head
   },
 
-  addCompilerPlugin("org.spire-math" % "kind-projector" % "0.9.9" cross CrossVersion.binary)
+  addCompilerPlugin("org.typelevel" % "kind-projector" % "0.10.2" cross CrossVersion.binary)
 )
 
 val mimaSettings = Seq(
   mimaPreviousArtifacts := {
     CrossVersion.partialVersion(scalaVersion.value) match {
-      case Some((2, 13)) =>  Set(organization.value % (name.value + "_2.13.0-M4") % "1.0.0")
-      case _ => Set(organization.value %% name.value % "1.0.0")
+      case Some((2, 13)) => Set.empty
+      case _ => Set.empty   // TODO put 2.0.0 here
     }
   },
   mimaBinaryIssueFilters ++= {
@@ -204,6 +178,12 @@ val mimaSettings = Seq(
       exclude[ReversedMissingMethodProblem]("cats.effect.laws.discipline.BracketTests.bracketTrans")
     )
   })
+
+// We broke binary compatibily for laws in 2.0
+val lawsMimaSettings = mimaSettings ++ Seq(
+  // TODO: set to 2.0.0 after release
+  mimaPreviousArtifacts := Set.empty
+)
 
 lazy val cmdlineProfile = sys.env.getOrElse("SBT_PROFILE", "")
 
@@ -227,7 +207,11 @@ lazy val scalaJSSettings = Seq(
     val l = (baseDirectory in LocalRootProject).value.toURI.toString
     val g = s"https://raw.githubusercontent.com/typelevel/cats-effect/$versionOrHash/"
     s"-P:scalajs:mapSourceURI:$l->$g"
-  })
+  },
+
+  // Work around "dropping dependency on node with no phase object: mixin"
+  scalacOptions in (Compile, doc) -= "-Xfatal-warnings",
+)
 
 lazy val skipOnPublishSettings = Seq(
   skip in publish := true,
@@ -258,10 +242,11 @@ lazy val core = crossProject(JSPlatform, JVMPlatform).in(file("core"))
       "org.typelevel"        %%% "cats-core"  % CatsVersion,
       "com.github.mpilquist" %%% "simulacrum" % SimulacrumVersion % CompileTime,
 
-      "org.typelevel"  %%% "cats-laws"  % CatsVersion             % "test",
-      "org.scalatest"  %%% "scalatest"  % ScalaTestVersion.value  % "test",
-      "org.scalacheck" %%% "scalacheck" % ScalaCheckVersion.value % "test",
-      "org.typelevel"  %%% "discipline" % DisciplineVersion.value % "test"),
+      "org.typelevel"     %%% "cats-laws"                % CatsVersion                    % Test,
+      "org.scalatest"     %%% "scalatest"                % ScalaTestVersion               % Test,
+      "org.scalatestplus" %%% "scalatestplus-scalacheck" % ScalaTestPlusScalaCheckVersion % Test,
+      "org.scalacheck"    %%% "scalacheck"               % ScalaCheckVersion              % Test,
+      "org.typelevel"     %%% "discipline-scalatest"     % DisciplineVersion              % Test),
 
     libraryDependencies ++= {
       CrossVersion.partialVersion(scalaVersion.value) match {
@@ -292,13 +277,13 @@ lazy val laws = crossProject(JSPlatform, JVMPlatform)
     name := "cats-effect-laws",
 
     libraryDependencies ++= Seq(
-      "org.typelevel"  %%% "cats-laws"  % CatsVersion,
-      "org.scalacheck" %%% "scalacheck" % ScalaCheckVersion.value,
-      "org.typelevel"  %%% "discipline" % DisciplineVersion.value,
-      "org.scalatest"  %%% "scalatest"  % ScalaTestVersion.value % "test"))
+      "org.typelevel"  %%% "cats-laws"            % CatsVersion,
+      "org.scalacheck" %%% "scalacheck"           % ScalaCheckVersion,
+      "org.typelevel"  %%% "discipline-scalatest" % DisciplineVersion,
+      "org.scalatest"  %%% "scalatest"            % ScalaTestVersion % Test))
 
   .jvmConfigure(_.enablePlugins(AutomateHeaderPlugin))
-  .jvmConfigure(_.settings(mimaSettings))
+  .jvmConfigure(_.settings(lawsMimaSettings))
   .jsConfigure(_.enablePlugins(AutomateHeaderPlugin))
   .jvmConfigure(profile)
   .jsConfigure(_.settings(scalaJSSettings))
@@ -405,7 +390,7 @@ lazy val microsite = project.in(file("site"))
  * version bump of 1.0.  Again, this is all to avoid pre-committing
  * to a major/minor bump before the work is done (see: Scala 2.8).
  */
-val BaseVersion = "1.0.0"
+val BaseVersion = "2.0.0"
 
 licenses in ThisBuild += ("Apache-2.0", url("http://www.apache.org/licenses/"))
 
@@ -415,47 +400,6 @@ licenses in ThisBuild += ("Apache-2.0", url("http://www.apache.org/licenses/"))
 
 coursierUseSbtCredentials in ThisBuild := true
 coursierChecksums in ThisBuild := Nil      // workaround for nexus sync bugs
-
-// Adapted from Rob Norris' post at https://tpolecat.github.io/2014/04/11/scalac-flags.html
-scalacOptions in ThisBuild ++= Seq(
-  "-language:_",
-  "-deprecation",
-  "-encoding", "UTF-8", // yes, this is 2 args
-  "-feature",
-  "-unchecked",
-  "-Ywarn-dead-code"
-)
-
-scalacOptions in ThisBuild ++= (
-  CrossVersion.partialVersion(scalaVersion.value) match {
-    case Some((2, v)) if v <= 12 => Seq(
-      "-Xfatal-warnings",
-      "-Yno-adapted-args",
-      "-Ypartial-unification"
-    )
-    case _ =>
-      Nil
-  }
-)
-
-scalacOptions in ThisBuild ++= {
-  CrossVersion.partialVersion(scalaVersion.value) match {
-    case Some((2, 12)) => Seq(
-      "-Ywarn-numeric-widen",
-      "-Ywarn-unused:imports",
-      "-Ywarn-unused:locals",
-      "-Ywarn-unused:patvars",
-      "-Ywarn-unused:privates",
-      "-Xlint:-missing-interpolator,-unused,_"
-    )
-    case _ =>
-      Seq("-Xlint:-missing-interpolator,_")
-  }
-}
-
-scalacOptions in Test += "-Yrangepos"
-
-useGpg := true
 
 enablePlugins(GitVersioning)
 
